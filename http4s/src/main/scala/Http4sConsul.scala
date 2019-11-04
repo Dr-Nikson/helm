@@ -1,6 +1,8 @@
 package helm
 package http4s
 
+import java.util.UUID
+
 import argonaut.Json
 import argonaut.Json.jEmptyObject
 import argonaut.StringWrap.StringToStringWrap
@@ -11,7 +13,7 @@ import cats.implicits._
 import journal.Logger
 import org.http4s.Method.PUT
 import org.http4s._
-import org.http4s.argonaut._
+import argonaut._
 import org.http4s.client._
 import org.http4s.client.dsl.Http4sClientDsl
 import org.http4s.headers.Authorization
@@ -34,14 +36,20 @@ final class Http4sConsulClient[F[_]](
   private implicit val listHealthChecksDecoder: EntityDecoder[F, List[HealthCheckResponse]] = jsonOf[F, List[HealthCheckResponse]]
   private implicit val listHealthNodesForServiceResponseDecoder: EntityDecoder[F, List[HealthNodesForServiceResponse]] =
     jsonOf[F, List[HealthNodesForServiceResponse]]
+  private implicit val sessionCreateResponseDecoder: EntityDecoder[F, SessionCreateResponse] = jsonOf[F, SessionCreateResponse]
+  private implicit val sessionInfoResponseDecoder: EntityDecoder[F, List[SessionInfoResponse]] = jsonOf[F, List[SessionInfoResponse]]
 
   private val log = Logger[this.type]
 
   def apply[A](op: ConsulOp[A]): F[A] = op match {
+    case ConsulOp.SessionCreate(datacenter, lockDelay, node, name, checks, behavior, ttl) =>
+      sessionCreate(datacenter, lockDelay, node, name, checks, behavior, ttl)
+    case ConsulOp.SessionDestroy(uuid: UUID) => sessionDestroy(uuid)
+    case ConsulOp.SessionInfo(uuid: UUID)    => sessionInfo(uuid)
     case ConsulOp.KVGet(key, recurse, datacenter, separator, index, wait) =>
       kvGet(key, recurse, datacenter, separator, index, wait)
     case ConsulOp.KVGetRaw(key, index, wait) => kvGetRaw(key, index, wait)
-    case ConsulOp.KVSet(key, value)  => kvSet(key, value)
+    case ConsulOp.KVSet(key, value, lockOperation) => kvSet(key, value, lockOperation)
     case ConsulOp.KVListKeys(prefix) => kvList(prefix)
     case ConsulOp.KVDelete(key)      => kvDelete(key)
     case ConsulOp.HealthListChecksForService(service, datacenter, near, nodeMeta, index, wait) =>
@@ -69,6 +77,8 @@ final class Http4sConsulClient[F[_]](
   private val addHeaders: Request[F] => Request[F] =
     addConsulToken _ andThen addCreds _
 
+  private def addLockOperation(uri: Uri, lockOperation: Option[LockOperation]) =
+    lockOperation.fold(uri)( op => uri.+?(LockOperation.LockOperationType.toString(op.operation), op.id.show))
   /** A nice place to store the Consul response headers so we can pass them around */
   private case class ConsulHeaders(
     index:       Long,
@@ -189,12 +199,16 @@ final class Http4sConsulClient[F[_]](
     }
   }
 
-  def kvSet(key: Key, value: Array[Byte]): F[Unit] =
+  def kvSet(key: Key, value: Array[Byte], lockOperation: Option[LockOperation]): F[Boolean] =
     for {
       _ <- F.delay(log.debug(s"setting consul key $key to $value"))
-      req <- PUT(value, baseUri / "v1" / "kv" / key).map(addHeaders)
+      req <- PUT(value, addLockOperation(baseUri / "v1" / "kv" / key, lockOperation)).map(addHeaders)
       response <- client.expectOr[String](req)(handleConsulErrorResponse)
-    } yield log.debug(s"setting consul key $key resulted in response $response")
+      bool <- F.delay(java.lang.Boolean.valueOf(response))
+    } yield {
+      log.debug(s"setting consul key $key resulted in response $response")
+      bool
+    }
 
   def kvList(prefix: Key): F[Set[Key]] = {
     val req = addHeaders(Request(uri = (baseUri / "v1" / "kv" / prefix).withQueryParam(QueryParam.fromKey("keys"))))
@@ -378,4 +392,63 @@ final class Http4sConsulClient[F[_]](
       response  <- client.expectOr[String](req)(handleConsulErrorResponse)
     } yield log.debug(s"setting maintenance mode for service $id to $enable resulted in $response")
   }
+
+  def sessionCreate(
+    datacenter: Option[String],
+    lockDelay:  Option[String],
+    node:       Option[String],
+    name:       Option[String],
+    checks:     Option[NonEmptyList[String]],
+    behavior:   Option[Behavior],
+    ttl:        Option[Interval]
+  ): F[SessionCreateResponse] = {
+
+    val json: Json =
+      ("LockDelay"                 :=? lockDelay)              ->?:
+        ("Node"                      :=? node)                 ->?:
+        ("Name"                      :=? name)                 ->?:
+        ("Checks"                    :=? checks.map(_.toList)) ->?:
+        ("Behavior"                  :=? behavior)             ->?:
+        ("TTL"                       :=? ttl)                  ->?:
+        jEmptyObject
+
+    for {
+      _        <- F.delay(log.debug(s"creating session with json: ${json.toString}"))
+      req      <- PUT(json, (baseUri / "v1" / "session" / "create").+??("dc", datacenter)).map(addHeaders)
+      response <- client.expectOr[SessionCreateResponse](req)(handleConsulErrorResponse)
+    } yield {
+      log.debug(s"creating session resulted in consul response $response")
+      response
+    }
+  }
+
+  def sessionDestroy(uuid: UUID): F[Unit] =
+    for {
+      _        <- F.delay(log.debug(s"destroying $uuid session"))
+      req      =  addHeaders(Request(Method.PUT, uri = (baseUri / "v1" / "session" / "destroy" / uuid.show)))
+      response <- client.expectOr[String](req)(handleConsulErrorResponse)
+    } yield log.debug(s"response from delete: $response")
+
+
+  def sessionInfo(uuid: UUID): F[QueryResponse[List[SessionInfoResponse]]] =
+    for {
+      _        <- F.delay(log.debug(s"fetching $uuid session info"))
+      req      =  addHeaders(Request(uri = (baseUri / "v1" / "session" / "info" / uuid.show)))
+      response <- client.fetch[QueryResponse[List[SessionInfoResponse]]](req){ response: Response[F] =>
+        response.status match {
+          case status@(Status.Ok|Status.NotFound) =>
+            for {
+              headers <- extractConsulHeaders(response)
+              value   <- if (status == Status.Ok) response.as[List[SessionInfoResponse]] else F.pure(List.empty)
+            } yield {
+              QueryResponse(value, headers.index, headers.knownLeader, headers.lastContact)
+            }
+          case _ =>
+            handleConsulErrorResponse(response).flatMap(F.raiseError)
+        }
+      }
+    } yield {
+      log.debug(s"response for session $uuid was $response")
+      response
+    }
 }

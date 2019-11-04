@@ -1,5 +1,7 @@
 package helm
 
+import java.util.UUID
+
 import scala.collection.immutable.{Set => SSet}
 import argonaut.{DecodeJson, EncodeJson, StringWrap}, StringWrap.StringToParseWrap
 import cats.data.NonEmptyList
@@ -25,7 +27,7 @@ object ConsulOp {
     maxWait: Option[Interval]
   ) extends ConsulOp[QueryResponse[Option[Array[Byte]]]]
 
-  final case class KVSet(key: Key, value: Array[Byte]) extends ConsulOp[Unit]
+  final case class KVSet(key: Key, value: Array[Byte], lockOperation: Option[LockOperation]) extends ConsulOp[Boolean]
 
   final case class KVDelete(key: Key) extends ConsulOp[Unit]
 
@@ -85,6 +87,20 @@ object ConsulOp {
 
   final case class AgentEnableMaintenanceMode(id: String, enable: Boolean, reason: Option[String]) extends ConsulOp[Unit]
 
+  final case class SessionCreate(
+    datacenter: Option[String],
+    lockDelay:  Option[String],
+    node:       Option[String],
+    name:       Option[String],
+    checks:     Option[NonEmptyList[String]],
+    behavior:   Option[Behavior],
+    ttl:        Option[Interval]
+  ) extends ConsulOp[SessionCreateResponse]
+
+  final case class SessionDestroy(uuid: UUID) extends ConsulOp[Unit]
+
+  final case class SessionInfo(uuid: UUID) extends ConsulOp[QueryResponse[List[SessionInfoResponse]]]
+
   type ConsulOpF[A] = Free[ConsulOp, A]
 
   def kvGet(
@@ -118,11 +134,11 @@ object ConsulOp {
       }
     }
 
-  def kvSet(key: Key, value: Array[Byte]): ConsulOpF[Unit] =
-    liftF(KVSet(key, value))
+  def kvSet(key: Key, value: Array[Byte], lockOperation: Option[LockOperation]): ConsulOpF[Boolean] =
+    liftF(KVSet(key, value, lockOperation))
 
-  def kvSetJson[A](key: Key, value: A)(implicit A: EncodeJson[A]): ConsulOpF[Unit] =
-    kvSet(key, A.encode(value).toString.getBytes("UTF-8"))
+  def kvSetJson[A](key: Key, value: A, lockOperation: Option[LockOperation])(implicit A: EncodeJson[A]): ConsulOpF[Boolean] =
+    kvSet(key, A.encode(value).toString.getBytes("UTF-8"), lockOperation)
 
   def kvDelete(key: Key): ConsulOpF[Unit] =
     liftF(KVDelete(key))
@@ -190,4 +206,21 @@ object ConsulOp {
 
   def agentEnableMaintenanceMode(id: String, enable: Boolean, reason: Option[String]): ConsulOpF[Unit] =
     liftF(AgentEnableMaintenanceMode(id, enable, reason))
+
+  def sessionCreate(
+    datacenter: Option[String],
+    lockDelay:  Option[String],
+    node:       Option[String],
+    name:       Option[String],
+    checks:     Option[NonEmptyList[String]],
+    behavior:   Option[Behavior],
+    ttl:        Option[Interval]
+  ): ConsulOpF[SessionCreateResponse] =
+    liftF(SessionCreate(datacenter, lockDelay, node, name, checks, behavior, ttl))
+
+  def sessionDestroy(uuid: UUID): ConsulOpF[Unit] =
+    liftF(SessionDestroy(uuid))
+
+  def sessionInfo(uuid: UUID): ConsulOpF[QueryResponse[List[SessionInfoResponse]]] =
+    liftF(SessionInfo(uuid))
 }

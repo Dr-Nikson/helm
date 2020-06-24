@@ -1,6 +1,6 @@
 organization in Global := "io.getnelson.helm"
 
-crossScalaVersions in Global := Seq("2.12.4", "2.11.12")
+crossScalaVersions in Global := Seq("2.13.2", "2.12.4")
 
 scalaVersion in Global := crossScalaVersions.value.head
 

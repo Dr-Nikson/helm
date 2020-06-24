@@ -1,6 +1,6 @@
 
 val http4sOrg = "org.http4s"
-val http4sVersion = "0.20.6"
+val http4sVersion = "0.21.4"
 val dockeritVersion = "0.9.8"
 
 enablePlugins(ScalaTestPlugin, ScalaCheckPlugin)

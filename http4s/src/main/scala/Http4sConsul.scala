@@ -181,7 +181,7 @@ final class Http4sConsulClient[F[_]](
             for {
               headers <- extractConsulHeaders(response)
               value   <- if (status == Status.Ok) {
-                response.body.compile.to[Array].map {
+                response.body.compile.to(Array).map {
                   case Array() => None
                   case nonEmpty => Some(nonEmpty)
                 }

@@ -9,13 +9,15 @@ import fs2.{Chunk, Stream}
 import org.http4s.{EntityBody, Header, Headers, Request, Response, Status, Uri}
 import org.http4s.client._
 import org.scalactic.TypeCheckedTripleEquals
-import org.scalatest._
 import org.scalatest.matchers.{BeMatcher, MatchResult}
 import org.http4s.syntax.string.http4sStringSyntax
+import org.scalatest.flatspec.AsyncFlatSpec
+import org.scalatest.matchers.must.Matchers.be
+import org.scalatest.matchers.should.Matchers.convertToAnyShouldWrapper
 
 import scala.reflect.ClassTag
 
-class Http4sConsulTests extends FlatSpec with Matchers with TypeCheckedTripleEquals {
+class Http4sConsulTests extends AsyncFlatSpec with TypeCheckedTripleEquals {
   import Http4sConsulTests._
 
   "kvGetRaw" should "succeed with some when the response is 200" in {

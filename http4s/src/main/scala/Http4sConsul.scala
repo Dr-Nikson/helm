@@ -7,13 +7,13 @@ import argonaut.Json
 import argonaut.Json.jEmptyObject
 import argonaut.StringWrap.StringToStringWrap
 import cats.data.NonEmptyList
-import cats.effect.Effect
+import cats.effect.{Effect, Sync}
 import cats.~>
 import cats.implicits._
-import journal.Logger
 import org.http4s.Method.PUT
 import org.http4s._
 import argonaut._
+import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.http4s.client._
 import org.http4s.client.dsl.Http4sClientDsl
 import org.http4s.headers.Authorization
@@ -39,7 +39,7 @@ final class Http4sConsulClient[F[_]](
   private implicit val sessionCreateResponseDecoder: EntityDecoder[F, SessionCreateResponse] = jsonOf[F, SessionCreateResponse]
   private implicit val sessionInfoResponseDecoder: EntityDecoder[F, List[SessionInfoResponse]] = jsonOf[F, List[SessionInfoResponse]]
 
-  private val log = Logger[this.type]
+  private val log = Slf4jLogger.getLoggerFromClass[F](this.getClass)
 
   def apply[A](op: ConsulOp[A]): F[A] = op match {
     case ConsulOp.SessionCreate(datacenter, lockDelay, node, name, checks, behavior, ttl) =>
@@ -132,7 +132,7 @@ final class Http4sConsulClient[F[_]](
     wait:       Option[Interval]
   ): F[QueryResponse[List[KVGetResult]]] = {
     for {
-      _ <- F.delay(log.debug(s"fetching consul key $key"))
+      _ <- log.debug(s"fetching consul key $key")
       req = addHeaders(
         Request(
           uri =
@@ -155,10 +155,8 @@ final class Http4sConsulClient[F[_]](
             handleConsulErrorResponse(response).flatMap(F.raiseError)
         }
       }
-    } yield {
-      log.debug(s"consul response for key get $key was $response")
-      response
-    }
+      _ <- log.debug(s"consul response for key get $key was $response")
+    } yield response
   }
 
   def kvGetRaw(
@@ -167,7 +165,7 @@ final class Http4sConsulClient[F[_]](
     wait:  Option[Interval]
   ): F[QueryResponse[Option[Array[Byte]]]] = {
     for {
-      _ <- F.delay(log.debug(s"fetching consul key $key"))
+      _ <- log.debug(s"fetching consul key $key")
       req = addHeaders(
         Request(
           uri =
@@ -193,42 +191,37 @@ final class Http4sConsulClient[F[_]](
             handleConsulErrorResponse(response).flatMap(F.raiseError)
         }
       }
-    } yield {
-      log.debug(s"consul response for raw key get $key is $response")
-      response
-    }
+      _ <- log.debug(s"consul response for raw key get $key is $response")
+    } yield response
   }
 
   def kvSet(key: Key, value: Array[Byte], lockOperation: Option[LockOperation]): F[Boolean] =
     for {
-      _ <- F.delay(log.debug(s"setting consul key $key to $value"))
+      _ <- log.debug(s"setting consul key $key to $value")
       req <- PUT(value, addLockOperation(baseUri / "v1" / "kv" / key, lockOperation)).map(addHeaders)
       response <- client.expectOr[String](req)(handleConsulErrorResponse)
       bool <- F.delay(java.lang.Boolean.valueOf(response))
-    } yield {
-      log.debug(s"setting consul key $key resulted in response $response")
-      bool
-    }
+      _ <- log.debug(s"setting consul key $key resulted in response $response")
+    } yield bool
 
   def kvList(prefix: Key): F[Set[Key]] = {
     val req = addHeaders(Request(uri = (baseUri / "v1" / "kv" / prefix).withQueryParam(QueryParam.fromKey("keys"))))
 
     for {
-      _ <- F.delay(log.debug(s"listing key consul with the prefix: $prefix"))
+      _ <- log.debug(s"listing key consul with the prefix: $prefix")
       response <- client.expectOr[List[String]](req)(handleConsulErrorResponse)
-    } yield {
-      log.debug(s"listing of keys: $response")
-      response.toSet
-    }
+      _ <- log.debug(s"listing of keys: $response")
+    } yield response.toSet
   }
 
   def kvDelete(key: Key): F[Unit] = {
     val req = addHeaders(Request(Method.DELETE, uri = (baseUri / "v1" / "kv" / key)))
 
     for {
-      _ <- F.delay(log.debug(s"deleting $key from the consul KV store"))
+      _ <- log.debug(s"deleting $key from the consul KV store")
       response <- client.expectOr[String](req)(handleConsulErrorResponse)
-    } yield log.debug(s"response from delete: $response")
+      _ <- log.debug(s"response from delete: $response")
+    } yield ()
   }
 
   def healthChecksForService(
@@ -240,7 +233,7 @@ final class Http4sConsulClient[F[_]](
     wait:       Option[Interval]
   ): F[QueryResponse[List[HealthCheckResponse]]] = {
     for {
-      _ <- F.delay(log.debug(s"fetching health checks for service $service"))
+      _ <- log.debug(s"fetching health checks for service $service")
       req = addHeaders(
         Request(
           uri =
@@ -251,10 +244,8 @@ final class Http4sConsulClient[F[_]](
               .+??("index", index)
               .+??("wait", wait.map(Interval.toString))))
       response <- client.fetch[QueryResponse[List[HealthCheckResponse]]](req)(extractQueryResponse)
-    } yield {
-      log.debug(s"health check response: " + response)
-      response
-    }
+      _ <- log.debug(s"health check response: " + response)
+    } yield response
   }
 
   def healthChecksForNode(
@@ -264,7 +255,7 @@ final class Http4sConsulClient[F[_]](
     wait:       Option[Interval]
   ): F[QueryResponse[List[HealthCheckResponse]]] = {
     for {
-      _ <- F.delay(log.debug(s"fetching health checks for node $node"))
+      _ <- log.debug(s"fetching health checks for node $node")
       req = addHeaders(
         Request(
           uri =
@@ -273,10 +264,8 @@ final class Http4sConsulClient[F[_]](
               .+??("index", index)
               .+??("wait", wait.map(Interval.toString))))
       response <- client.fetch[QueryResponse[List[HealthCheckResponse]]](req)(extractQueryResponse)
-    } yield {
-      log.debug(s"health checks for node response: $response")
-      response
-    }
+      _ <- log.debug(s"health checks for node response: $response")
+    } yield response
   }
 
   def healthChecksInState(
@@ -286,9 +275,9 @@ final class Http4sConsulClient[F[_]](
     nodeMeta:   Option[String],
     index:      Option[Long],
     wait:       Option[Interval]
-  ): F[QueryResponse[List[HealthCheckResponse]]] = {
+  ): F[QueryResponse[List[HealthCheckResponse]]] =
     for {
-      _ <- F.delay(log.debug(s"fetching health checks for service ${HealthStatus.toString(state)}"))
+      _ <- log.debug(s"fetching health checks for service ${HealthStatus.toString(state)}")
       req = addHeaders(
         Request(
           uri =
@@ -299,11 +288,9 @@ final class Http4sConsulClient[F[_]](
               .+??("index", index)
               .+??("wait", wait.map(Interval.toString))))
       response <- client.fetch[QueryResponse[List[HealthCheckResponse]]](req)(extractQueryResponse)
-    } yield {
-      log.debug(s"health checks in state response: $response")
-      response
-    }
-  }
+      _ <- log.debug(s"health checks in state response: $response")
+    } yield response
+
 
   def healthNodesForService(
     service:     String,
@@ -314,9 +301,9 @@ final class Http4sConsulClient[F[_]](
     passingOnly: Option[Boolean],
     index:       Option[Long],
     wait:        Option[Interval]
-  ): F[QueryResponse[List[HealthNodesForServiceResponse]]] = {
+  ): F[QueryResponse[List[HealthNodesForServiceResponse]]] =
     for {
-      _ <- F.delay(log.debug(s"fetching nodes for service $service from health API"))
+      _ <- log.debug(s"fetching nodes for service $service from health API")
       req = addHeaders(
         Request(
           uri =
@@ -330,11 +317,8 @@ final class Http4sConsulClient[F[_]](
               .+??("wait", wait.map(Interval.toString))))
 
       response <- client.fetch[QueryResponse[List[HealthNodesForServiceResponse]]](req)(extractQueryResponse)
-    } yield {
-      log.debug(s"health nodes for service response: $response")
-      response
-    }
-  }
+      _ <- log.debug(s"health nodes for service response: $response")
+    } yield response
 
   def agentRegisterService(
     service:           String,
@@ -358,39 +342,42 @@ final class Http4sConsulClient[F[_]](
       jEmptyObject
 
     for {
-      _ <- F.delay(log.debug(s"registering $service with json: ${json.toString}"))
+      _ <- log.debug(s"registering $service with json: ${json.toString}")
       req <- PUT(json, baseUri / "v1" / "agent" / "service" / "register").map(addHeaders)
       response <- client.expectOr[String](req)(handleConsulErrorResponse)
-    } yield log.debug(s"registering service $service resulted in response $response")
+      _ <- log.debug(s"registering service $service resulted in response $response")
+    } yield ()
   }
 
   def agentDeregisterService(id: String): F[Unit] = {
     val req = addHeaders(Request(Method.PUT, uri = (baseUri / "v1" / "agent" / "service" / "deregister" / id)))
     for {
-      _ <- F.delay(log.debug(s"deregistering service with id $id"))
+      _ <- log.debug(s"deregistering service with id $id")
       response <- client.expectOr[String](req)(handleConsulErrorResponse)
-    } yield log.debug(s"response from deregister: " + response)
+      _ <- log.debug(s"response from deregister: " + response)
+    } yield ()
   }
 
   def agentListServices(): F[Map[String, ServiceResponse]] = {
     for {
-      _ <- F.delay(log.debug(s"listing services registered with local agent"))
+      _ <- log.debug(s"listing services registered with local agent")
       req = addHeaders(Request(uri = (baseUri / "v1" / "agent" / "services")))
       services <- client.expectOr[Map[String, ServiceResponse]](req)(handleConsulErrorResponse)
+      _ <- log.debug(s"got services: $services")
     } yield {
-      log.debug(s"got services: $services")
       services
     }
   }
 
   def agentEnableMaintenanceMode(id: String, enable: Boolean, reason: Option[String]): F[Unit] = {
     for {
-      _ <- F.delay(log.debug(s"setting service with id $id maintenance mode to $enable"))
+      _ <- log.debug(s"setting service with id $id maintenance mode to $enable")
       req = addHeaders(
         Request(Method.PUT,
           uri = (baseUri / "v1" / "agent" / "service" / "maintenance" / id).+?("enable", enable).+??("reason", reason)))
       response  <- client.expectOr[String](req)(handleConsulErrorResponse)
-    } yield log.debug(s"setting maintenance mode for service $id to $enable resulted in $response")
+      _ <- log.debug(s"setting maintenance mode for service $id to $enable resulted in $response")
+    } yield ()
   }
 
   def sessionCreate(
@@ -413,26 +400,27 @@ final class Http4sConsulClient[F[_]](
         jEmptyObject
 
     for {
-      _        <- F.delay(log.debug(s"creating session with json: ${json.toString}"))
+      _        <- log.debug(s"creating session with json: ${json.toString}")
       req      <- PUT(json, (baseUri / "v1" / "session" / "create").+??("dc", datacenter)).map(addHeaders)
       response <- client.expectOr[SessionCreateResponse](req)(handleConsulErrorResponse)
+      _ <- log.debug(s"creating session resulted in consul response $response")
     } yield {
-      log.debug(s"creating session resulted in consul response $response")
       response
     }
   }
 
   def sessionDestroy(uuid: UUID): F[Unit] =
     for {
-      _        <- F.delay(log.debug(s"destroying $uuid session"))
+      _        <- log.debug(s"destroying $uuid session")
       req      =  addHeaders(Request(Method.PUT, uri = (baseUri / "v1" / "session" / "destroy" / uuid.show)))
       response <- client.expectOr[String](req)(handleConsulErrorResponse)
-    } yield log.debug(s"response from delete: $response")
+      _ <- log.debug(s"response from delete: $response")
+    } yield ()
 
 
   def sessionInfo(uuid: UUID): F[QueryResponse[List[SessionInfoResponse]]] =
     for {
-      _        <- F.delay(log.debug(s"fetching $uuid session info"))
+      _        <- log.debug(s"fetching $uuid session info")
       req      =  addHeaders(Request(uri = (baseUri / "v1" / "session" / "info" / uuid.show)))
       response <- client.fetch[QueryResponse[List[SessionInfoResponse]]](req){ response: Response[F] =>
         response.status match {
@@ -447,8 +435,6 @@ final class Http4sConsulClient[F[_]](
             handleConsulErrorResponse(response).flatMap(F.raiseError)
         }
       }
-    } yield {
-      log.debug(s"response for session $uuid was $response")
-      response
-    }
+      _ <- log.debug(s"response for session $uuid was $response")
+    } yield response
 }

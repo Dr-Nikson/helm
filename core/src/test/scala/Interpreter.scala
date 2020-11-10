@@ -14,9 +14,7 @@ sealed trait Interpreter[F[_], M[_], +S] {
   def flatMap[S2](f: S => Interpreter[F, M, S2]): Interpreter[F, M, S2] =
     this match {
       case Expect(pattern, fail) =>
-        val pattern2 = new Forall[({
-            type λ[α] = PartialFunction[F[α], (Interpreter[F, M, S2], M[α])]
-          })#λ] {
+        val pattern2 = new Forall[Lambda[α => PartialFunction[F[α], (Interpreter[F, M, S2], M[α])]]] {
           def apply[A]: PartialFunction[F[A], (Interpreter[F, M, S2], M[A])] = {
             pattern.apply[A] andThen {
               case (it, ma) => (it flatMap f, ma)
@@ -37,9 +35,7 @@ sealed trait Interpreter[F[_], M[_], +S] {
   def orElse[S2 >: S](that: Interpreter[F, M, S2]): Interpreter[F, M, S2] =
     this match {
       case Expect(pattern, fail) =>
-        Expect(pattern.asInstanceOf[Forall[({
-              type λ[α] = PartialFunction[F[α], (Interpreter[F, M, S2], M[α])]
-            })#λ]], fail orElse that) // note that we don't eliminate within pattern; thus, when we consume from the Free, we move "past" our error handler
+        Expect(pattern.asInstanceOf[Forall[Lambda[α => PartialFunction[F[α], (Interpreter[F, M, S2], M[α])]]]], fail orElse that) // note that we don't eliminate within pattern; thus, when we consume from the Free, we move "past" our error handler
       case Bind(ma, extend) => Bind(ma, extend andThen { _ orElse that })
       case Return(s) => Return(s)
       case Fail(_) => that
@@ -103,21 +99,21 @@ sealed trait Interpreter[F[_], M[_], +S] {
       case Fail(t) => C.raiseError(t)
     }
 
-    val fc = free.compile(λ[F ~> Coyoneda[F, ?]](Coyoneda.lift(_)))
+    val fc = free.compile(λ[F ~> Coyoneda[F, *]](Coyoneda.lift(_)))
     loop(this, fc, None)
   }
 }
 
 object Interpreter {
-  private type FreeC[F[_], B] = Free[({type λ[α] = Coyoneda[F, α]})#λ, B]
+  private type FreeC[F[_], B] = Free[Coyoneda[F, *], B]
 
   trait Functions[F[_], M[_]] {
-    def point[S](s: S) = Interpreter.point[F, M, S](s)
+    def point[S](s: S): Interpreter[F, M, S] = Interpreter.point[F, M, S](s)
 
-    def eval[S](ms: M[S]) = Interpreter.eval[F, M, S](ms)
+    def eval[S](ms: M[S]): Interpreter[F, M, S] = Interpreter.eval[F, M, S](ms)
 
     def expectU[A](pattern: PartialFunction[F[A], M[A]])(
-        implicit T: TestFramework) = {
+        implicit T: TestFramework): Interpreter[F, M, Unit] = {
 
       expectOr[Unit, A](pattern andThen { r =>
         ((), r)
@@ -125,7 +121,7 @@ object Interpreter {
     }
 
     def expect[S, A](pattern: PartialFunction[F[A], (S, M[A])])(
-        implicit T: TestFramework) = {
+        implicit T: TestFramework): Interpreter[F, M, S] = {
 
       expectOr[S, A](
         pattern,
@@ -134,10 +130,10 @@ object Interpreter {
 
     def expectOr[S, A](
         pattern: PartialFunction[F[A], (S, M[A])],
-        fail: Interpreter[F, M, S]) =
+        fail: Interpreter[F, M, S]): Interpreter[F, M, S] =
       Interpreter.expectOr[F, M, S, A](pattern, fail)
 
-    def fail[S](t: Throwable) = Interpreter.fail[F, M, S](t)
+    def fail[S](t: Throwable): Interpreter[F, M, S] = Interpreter.fail[F, M, S](t)
   }
 
   // a way to partially apply the types for slightly nicer inference
@@ -161,8 +157,8 @@ object Interpreter {
       fail: Interpreter[F, M, S]): Interpreter[F, M, S] = {
 
     val lifted =
-      liftPF[F, ({ type λ[α] = (Interpreter[F, M, S], M[α]) })#λ, A](
-        pattern andThen { case (s, ma) => (point(s), ma) })
+      liftPF[F, Lambda[α => (Interpreter[F, M, S], M[α])], A](
+        pattern andThen { case (s, ma) => (point[F, M, S](s), ma) })
 
     Expect(lifted, fail)
   }
@@ -170,9 +166,7 @@ object Interpreter {
   def fail[F[_], M[_], S](t: Throwable): Interpreter[F, M, S] = Fail(t)
 
   // TODO this is only really definable where Copointed[F] cannot be defined, which isn't a constraint we can represent
-  private def liftPF[F[_], G[_], A](pf: PartialFunction[F[A], G[A]]): Forall[({
-      type λ[α] = PartialFunction[F[α], G[α]]
-    })#λ] = new Forall[({ type λ[α] = PartialFunction[F[α], G[α]] })#λ] {
+  private def liftPF[F[_], G[_], A](pf: PartialFunction[F[A], G[A]]): Forall[Lambda[α => PartialFunction[F[α], G[α]]]] = new Forall[Lambda[α => PartialFunction[F[α], G[α]]]] {
     def apply[B]: PartialFunction[F[B], G[B]] =
       new PartialFunction[F[B], G[B]] {
         def isDefinedAt(fb: F[B]): Boolean =
@@ -189,9 +183,7 @@ object Interpreter {
       extends Interpreter[F, M, S]
   final case class Return[F[_], M[_], S](s: S) extends Interpreter[F, M, S]
 
-  final case class Expect[F[_], M[_], S](pattern: Forall[({
-      type λ[α] = PartialFunction[F[α], (Interpreter[F, M, S], M[α])]
-    })#λ], fail: Interpreter[F, M, S])
+  final case class Expect[F[_], M[_], S](pattern: Forall[Lambda[α => PartialFunction[F[α], (Interpreter[F, M, S], M[α])]]], fail: Interpreter[F, M, S])
       extends Interpreter[F, M, S]
   final case class Fail[F[_], M[_], S](t: Throwable)
       extends Interpreter[F, M, S] // TODO be less insane than String

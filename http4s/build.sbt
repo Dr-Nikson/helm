@@ -1,16 +1,13 @@
 
 val http4sOrg = "org.http4s"
-val http4sVersion = "0.20.6"
-val dockeritVersion = "0.9.8"
+val http4sVersion = "0.21.8"
+val dockeritVersion = "0.9.9"
+val logForCatsVersion = "1.1.1"
 
-enablePlugins(ScalaTestPlugin, ScalaCheckPlugin)
 
-scalaTestVersion := "3.0.5"
-
-scalaCheckVersion := "1.13.5"
 
 libraryDependencies ++= Seq(
-  "io.verizon.journal" %% "core"                            % "3.0.18",
+  "io.chrisdavenport" %% "log4cats-slf4j"    % logForCatsVersion,
   http4sOrg            %% "http4s-blaze-client"             % http4sVersion,
   http4sOrg            %% "http4s-argonaut"                 % http4sVersion,
   "com.whisk"          %% "docker-testkit-scalatest"        % dockeritVersion % "test",
